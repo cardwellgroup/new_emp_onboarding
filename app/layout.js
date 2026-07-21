@@ -5,6 +5,13 @@ export const metadata = {
   description: '30/60/90 onboarding aligned to the OnePage — a Connections Dialogs extension',
 };
 
+// Mobile-first: proper scaling on phones (item 15)
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#00007b',
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
