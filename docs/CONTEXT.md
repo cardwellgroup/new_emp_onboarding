@@ -38,6 +38,14 @@ Supabase for data/auth/storage, Claude for AI. Meant to eventually fold into the
   only for `source='manager_added'` items.
 - **Deploys**: push to `main` → Vercel builds. Migrations are applied directly to Supabase, not by the
   build. Prefer additive migrations.
+- **Smart-list inputs**: `smartListKeyDown(e, setValue)` powers auto-continuing numbered/bulleted lists
+  in the AI-assist and meeting-transcript textareas. Reuse it if you add other list-style inputs.
+- **v0.4 conventions**: item tiles are minimal (#ref/★/title/status) — all detail lives in `ItemDrawer`
+  (right slide-out). Employee edits of non-own items set `pending_edit` (prior snapshot kept; leader
+  approve keeps, decline reverts). Starred items are pinned (not draggable); non-starred DnD persists to
+  `sort_order` (spaced ×10). `ref_no` is DB-assigned, per-plan, never reused — display as `#N`. Phase end
+  dates come from `plans.plan_start_date` + `day_mode` via `addPlanDays`. Drafts autosave to
+  `localStorage` (`cw_draft_*`) and clear on final save.
 
 ## Where to change common things
 | Want to… | Edit |

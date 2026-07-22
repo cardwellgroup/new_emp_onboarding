@@ -166,3 +166,8 @@ their own plan; neither can touch another employee's data even by calling the AP
 7. `v02_storage_note_uploads` — private bucket + storage RLS.
 8. `v02_fix_empty_email_handling` — treat empty `current_email()` as "no user" in the content guard/audit.
 9. `v03_add_role_description` — `plans.role_description` for multi-employee auto-generation.
+10. `v04_dates_refno_pending_edit` — `plans.plan_start_date` + `plans.day_mode` (calendar|business);
+    `plan_items.ref_no` (per-plan sequential, trigger `trg_items_refno` via `assign_ref_no()`, backfilled)
+    and `plan_items.pending_edit` jsonb ({prior, comment, requested_by, at} while an employee edit awaits
+    leader approval); content guard relaxed so any **plan member** can edit item content (employee edits
+    of non-own items are routed to approval at the app layer via `pending_edit`).

@@ -2,6 +2,23 @@
 
 Each feature and the code + tables that implement it. Component names are in `app/page.js` unless noted.
 
+## v0.4 additions
+- **Employee Info module** (leader; nav tab "Employee Info"): edit employee name/email/role, employee
+  start date, **plan start date**, and a **calendar vs business days (M–F)** toggle (`plans.plan_start_date`,
+  `plans.day_mode`). Phase end dates computed by `addPlanDays`/`phaseEndLabel` and shown in each phase header.
+- **Simplified tiles + detail drawer**: `ItemTile` shows #ref, ★, title, status; clicking opens
+  `ItemDrawer` (slides from right) with status, tags, done-means, evidence, edit, delete, comments.
+- **Employee edit → approval** (`pending_edit` jsonb): employees can edit any item; edits to items they
+  didn't create apply immediately but carry an APPROVAL PENDING badge with the prior content stored;
+  leader approves (keeps) or declines (reverts + optional comment). `onSave`/`onResolveEdit`.
+- **Reference numbers**: `plan_items.ref_no`, per-plan sequential, assigned by DB trigger, never reused.
+- **Ordering**: starred items pinned on top (fixed, by ref); non-starred drag-and-drop within each
+  phase+track, persisted to `sort_order` (`onReorder`).
+- **Request review**: employee proposals open in an editable form (`RequestRow`) so the leader can modify
+  before approving; decline takes an optional comment (stored in `ai_suggestion.denial_comment`).
+- **Autosave drafts**: AI-assist, transcript, build-it form, journal, and comment inputs persist locally
+  (`draftGet/Set/Clear`, keys `cw_draft_*`) until the explicit save/submit.
+
 ## Multi-employee & roles (v0.3)
 - **Add Employee** (leader): `AddEmployee` modal → inserts a `plans` row → `POST /api/generate-plan`
   inserts starter `plan_items` (source `ai_suggested`) → `POST /api/invite` provisions the login.
@@ -33,6 +50,9 @@ Each feature and the code + tables that implement it. Component names are in `ap
   list; shown in a `Carousel` to review/edit/add each.
 - **From a meeting**: `MeetingImport` → `POST /api/transcript` from a pasted transcript **or** a meeting
   link (server fetches & strips the link); candidates shown in the same carousel.
+- **Smart-list typing** (`smartListKeyDown`): the AI-assist box and the meeting Transcript box
+  auto-continue lists — pressing Enter after `1. …`/`* …`/`- …` inserts the next number/bullet, an empty
+  marker line exits the list, and Shift+Enter is a plain line break.
 - Leader additions land directly (source `manager_added`, then employee must acknowledge). Employee
   additions become `ad_hoc_requests` (pending) for leader approval.
 

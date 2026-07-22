@@ -28,6 +28,40 @@ function mondayOf(d) { const x = new Date(d); const day = (x.getDay() + 6) % 7; 
 const parseTags = (t) => (Array.isArray(t) ? t : String(t || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean));
 const eq = (a, b) => (a || '').toLowerCase() === (b || '').toLowerCase();
 
+/* ---------- Phase date math (items 1-2): plan_start_date anchors the 30/60/90 windows.
+   day_mode 'business' counts M-F only; 'calendar' counts every day. ---------- */
+function addPlanDays(startStr, n, mode) {
+  if (!startStr) return null;
+  const d = new Date(startStr + 'T12:00:00');
+  if (mode === 'business') {
+    let left = n;
+    while (left > 0) { d.setDate(d.getDate() + 1); const dow = d.getDay(); if (dow !== 0 && dow !== 6) left--; }
+  } else {
+    d.setDate(d.getDate() + n);
+  }
+  return d;
+}
+function phaseEndLabel(plan, n) {
+  const start = plan?.plan_start_date || plan?.start_date;
+  if (!start) return '';
+  const d = addPlanDays(start, n, plan?.day_mode || 'calendar');
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+}
+
+/* ---------- Autosave drafts (item 5): values persist locally until the final save. ---------- */
+function draftGet(key) { try { return localStorage.getItem('cw_draft_' + key) || ''; } catch { return ''; } }
+function draftSet(key, val) { try { if (val) localStorage.setItem('cw_draft_' + key, val); else localStorage.removeItem('cw_draft_' + key); } catch {} }
+function draftClear(...keys) { try { keys.forEach((k) => localStorage.removeItem('cw_draft_' + k)); } catch {} }
+
+/* ---------- Item ordering (items 7-8): starred first (fixed, by ref), then sort_order. ---------- */
+function orderItems(list) {
+  return [...list].sort((a, b) => {
+    if (!!b.phase_critical - !!a.phase_critical) return (!!b.phase_critical ? 1 : 0) - (!!a.phase_critical ? 1 : 0);
+    if (a.phase_critical && b.phase_critical) return (a.ref_no || 0) - (b.ref_no || 0);
+    return (a.sort_order || 0) - (b.sort_order || 0) || (a.ref_no || 0) - (b.ref_no || 0);
+  });
+}
+
 function priorityCodes(org) { return (org?.one_page?.priorities || []).map((p) => p.code); }
 function valueCodes(org) { return (org?.core_values || []).map((v) => v.code); }
 function tagTitle(code, org) {
@@ -141,52 +175,114 @@ function flagFor(item, acks, email) {
   return null;
 }
 
-/* ---------- Item card ---------- */
-function ItemCard({ item, org, plan, email, isManager, flag, comments, onStatus, onDelete, onSave, onTogglePriority, onAck, onComment, onDeleteComment }) {
-  const [editing, setEditing] = useState(false);
-  const [openComments, setOpenComments] = useState(false);
-  const canEdit = isManager || eq(item.created_by, email);
-  const itemComments = comments.filter((c) => c.plan_item_id === item.id);
-
-  if (editing) {
-    return <ItemForm org={org} initial={item} onCancel={() => setEditing(false)} onSubmit={async (patch) => { const ok = await onSave(item, patch); if (ok) setEditing(false); }} submitLabel="Save changes" />;
-  }
-
+/* ---------- Item tile (simplified; click opens the detail drawer — item 4) ---------- */
+function ItemTile({ item, flag, onOpen, draggable, onDragStart, onDragOver, onDrop }) {
   return (
-    <div className={`card ${flag === 'new' ? 'is-new' : ''} ${flag === 'edited' ? 'is-edited' : ''}`}>
+    <div
+      className={`card tile ${flag === 'new' ? 'is-new' : ''} ${flag === 'edited' ? 'is-edited' : ''} ${draggable ? 'draggable' : ''}`}
+      onClick={() => onOpen(item)}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <div className="title">
-        {canEdit && (
-          <button className={`startag ${item.phase_critical ? 'on' : ''}`} title={item.phase_critical ? 'Priority for this phase' : 'Mark as phase priority'} onClick={() => onTogglePriority(item)}>★</button>
-        )}
-        {!canEdit && item.phase_critical && <span className="startag on" title="Priority for this phase">★</span>}
+        <span className="refno">#{item.ref_no || '–'}</span>
+        {item.phase_critical && <span className="startag on" title="Priority for this phase">★</span>}
         <span className="txt">{item.title}</span>
-      </div>
-      <div className="measure"><b>Done means:</b> {item.success_measure}</div>
-      {item.evidence && <div className="measure"><b>Evidence:</b> {item.evidence}</div>}
-      <div className="card-foot">
         {flag === 'new' && <span className="newchip">NEW</span>}
         {flag === 'edited' && <span className="editedchip">UPDATED</span>}
-        {(item.tags || []).map((t) => <Tag key={t} code={t} org={org} />)}
+        {item.pending_edit && <span className="pendchip" title="Edit awaiting leader approval">APPROVAL PENDING</span>}
         <span className={`status ${item.status}`}>{statusLabel(item.status)}</span>
-        <select value={item.status} onChange={(e) => onStatus(item, e.target.value)} aria-label="Update status" style={{ marginLeft: 'auto' }}>
-          {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </select>
       </div>
-      <div className="card-foot">
-        {flag && <button className="ackbtn" onClick={() => onAck(item)}>Got it</button>}
-        <button className="iconbtn" onClick={() => setOpenComments((o) => !o)}>💬 {itemComments.length || ''} Comments</button>
-        {canEdit && <button className="iconbtn" onClick={() => setEditing(true)}>✎ Edit</button>}
-        {canEdit && <button className="iconbtn danger" onClick={() => onDelete(item)}>🗑 Delete</button>}
-      </div>
-      {openComments && (
-        <CommentThread item={item} email={email} comments={itemComments} onComment={onComment} onDeleteComment={onDeleteComment} isManager={isManager} />
-      )}
     </div>
   );
 }
 
+/* ---------- Detail drawer (progressive disclosure, slides from the right) ---------- */
+function ItemDrawer({ item, org, plan, email, isManager, flag, comments, handlers, onClose }) {
+  const [editing, setEditing] = useState(false);
+  const [editNote, setEditNote] = useState('');
+  const [denyNote, setDenyNote] = useState('');
+  if (!item) return null;
+  const canDelete = isManager || eq(item.created_by, email);
+  const isOwn = eq(item.created_by, email);
+  const itemComments = comments.filter((c) => c.plan_item_id === item.id);
+  const pe = item.pending_edit;
+  return (
+    <>
+      <div className="drawer-back" onClick={onClose} />
+      <aside className="drawer">
+        <div className="drawer-head">
+          <span className="refno big">#{item.ref_no || '–'}</span>
+          {item.phase_critical && <span className="startag on">★</span>}
+          <button className="drawer-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <h3 className="drawer-title">{item.title}</h3>
+        <div className="small muted" style={{ marginBottom: 10 }}>{phaseLabel(item.phase)} · {item.track === 'impact' ? 'Impact' : 'Acclimation'}{item.created_by ? ` · added by ${item.created_by}` : ''}</div>
+
+        {pe && (
+          <div className="pending-box">
+            <b>Edit awaiting leader approval</b>
+            <div className="small" style={{ marginTop: 4 }}>Requested by {pe.requested_by}{pe.comment ? ` — “${pe.comment}”` : ''}</div>
+            {isManager && (
+              <div style={{ marginTop: 8 }}>
+                <input placeholder="Optional comment if declining…" value={denyNote} onChange={(e) => setDenyNote(e.target.value)} style={{ width: '100%', marginBottom: 8 }} />
+                <div className="row">
+                  <button className="btn sm" onClick={() => handlers.onResolveEdit(item, true, '')}>Approve edit</button>
+                  <button className="btn ghost sm" onClick={() => handlers.onResolveEdit(item, false, denyNote.trim())}>Decline &amp; revert</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!editing ? (
+          <>
+            <div className="field"><label>Status</label>
+              <div className="row">
+                <span className={`status ${item.status}`}>{statusLabel(item.status)}</span>
+                <select value={item.status} onChange={(e) => handlers.onStatus(item, e.target.value)} aria-label="Update status">
+                  {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="field"><label>Aligned to</label>
+              <div className="row">{(item.tags || []).length ? (item.tags || []).map((t) => <Tag key={t} code={t} org={org} />) : <span className="small muted">No tags</span>}</div>
+            </div>
+            <div className="field"><label>Done means</label><div className="drawer-text">{item.success_measure}</div></div>
+            {item.evidence && <div className="field"><label>Evidence</label><div className="drawer-text">{item.evidence}</div></div>}
+            <div className="row" style={{ margin: '6px 0 14px' }}>
+              {flag && <button className="ackbtn" onClick={() => handlers.onAck(item)}>Got it</button>}
+              <button className={`iconbtn ${item.phase_critical ? '' : ''}`} onClick={() => handlers.onTogglePriority(item)}>{item.phase_critical ? '★ Unstar' : '☆ Star as priority'}</button>
+              <button className="iconbtn" onClick={() => setEditing(true)}>✎ Edit</button>
+              {canDelete && <button className="iconbtn danger" onClick={() => handlers.onDelete(item)}>🗑 Delete</button>}
+            </div>
+          </>
+        ) : (
+          <>
+            {!isManager && !isOwn && (
+              <div className="field"><label>Note to your leader (optional — this edit needs approval)</label>
+                <input value={editNote} onChange={(e) => setEditNote(e.target.value)} placeholder="Why the change…" />
+              </div>
+            )}
+            <ItemForm org={org} initial={item} onCancel={() => setEditing(false)}
+              onSubmit={async (patch) => { const ok = await handlers.onSave(item, patch, editNote.trim()); if (ok) { setEditing(false); setEditNote(''); } return ok; }}
+              submitLabel={!isManager && !isOwn ? 'Save (sends for approval)' : 'Save changes'} />
+          </>
+        )}
+
+        <div className="field"><label>Comments</label></div>
+        <CommentThread item={item} email={email} comments={itemComments} onComment={handlers.onComment} onDeleteComment={handlers.onDeleteComment} isManager={isManager} />
+      </aside>
+    </>
+  );
+}
+
 function CommentThread({ item, email, comments, onComment, onDeleteComment, isManager }) {
-  const [body, setBody] = useState('');
+  const dk = `cm_${item.id}`;
+  const [body, setBodyState] = useState(() => draftGet(dk));
+  const setBody = (v) => { const val = typeof v === 'function' ? v(body) : v; setBodyState(val); draftSet(dk, val); };
   const [priv, setPriv] = useState(false);
   return (
     <div className="comments">
@@ -205,22 +301,24 @@ function CommentThread({ item, email, comments, onComment, onDeleteComment, isMa
       </div>
       <div className="row" style={{ marginTop: 6 }}>
         <label className="checkline"><input type="checkbox" checked={priv} onChange={(e) => setPriv(e.target.checked)} /> Make private (saves to Journal)</label>
-        <button className="btn sm" style={{ marginLeft: 'auto' }} disabled={body.trim().length < 2} onClick={async () => { const ok = await onComment(item, body.trim(), priv); if (ok) { setBody(''); setPriv(false); } }}>Post</button>
+        <button className="btn sm" style={{ marginLeft: 'auto' }} disabled={body.trim().length < 2} onClick={async () => { const ok = await onComment(item, body.trim(), priv); if (ok) { setBodyState(''); draftClear(dk); setPriv(false); } }}>Post</button>
       </div>
     </div>
   );
 }
 
 /* ---------- Shared item form (add + edit, items 5 & 11) ---------- */
-function ItemForm({ org, initial, onSubmit, onCancel, submitLabel = 'Add to plan' }) {
+function ItemForm({ org, initial, onSubmit, onCancel, submitLabel = 'Add to plan', draftKey }) {
   const P = priorityCodes(org), V = valueCodes(org);
   const initTags = parseTags(initial?.tags);
-  const [title, setTitle] = useState(initial?.title || '');
+  const [title, setTitleState] = useState(() => initial?.title || (draftKey ? draftGet(draftKey + '_t') : '') || '');
+  const setTitle = (v) => { const val = typeof v === 'function' ? v(title) : v; setTitleState(val); if (draftKey) draftSet(draftKey + '_t', val); };
   const [phase, setPhase] = useState(String(initial?.phase || 60));
   const [track, setTrack] = useState(initial?.track || 'impact');
   const [selP, setSelP] = useState(initTags.filter((t) => t.startsWith('P')));
   const [selV, setSelV] = useState(initTags.filter((t) => t.startsWith('V')));
-  const [measure, setMeasure] = useState(initial?.success_measure || '');
+  const [measure, setMeasureState] = useState(() => initial?.success_measure || (draftKey ? draftGet(draftKey + '_m') : '') || '');
+  const setMeasure = (v) => { const val = typeof v === 'function' ? v(measure) : v; setMeasureState(val); if (draftKey) draftSet(draftKey + '_m', val); };
   const [priority, setPriority] = useState(!!initial?.phase_critical);
   const [busy, setBusy] = useState(false);
   const toggle = (arr, set, code) => set(arr.includes(code) ? arr.filter((x) => x !== code) : [...arr, code]);
@@ -229,6 +327,7 @@ function ItemForm({ org, initial, onSubmit, onCancel, submitLabel = 'Add to plan
     setBusy(true);
     const ok = await onSubmit({ title: title.trim(), phase: +phase, track, tags: [...selP, ...selV], success_measure: measure.trim() || 'Define “done” together at the next dialogue', phase_critical: priority });
     setBusy(false);
+    if (ok && draftKey) { draftClear(draftKey + '_t', draftKey + '_m'); setTitleState(''); setMeasureState(''); }
   }
   return (
     <div className="panel" style={{ borderColor: 'var(--cw-blue)' }}>
@@ -284,7 +383,23 @@ function PlanView({ org, items, comments, acks, email, isManager, plan, handlers
   const [statusF, setStatusF] = useState([]);
   const [priorityF, setPriorityF] = useState(false);
   const [tagF, setTagF] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const dragRef = useRef(null);
   const op = org?.one_page || {};
+  const openItem = openId ? items.find((i) => i.id === openId) : null;
+
+  // Drag & drop among NON-starred items in the same phase+track (item 8)
+  function dropOn(list, target) {
+    const fromId = dragRef.current;
+    dragRef.current = null;
+    if (!fromId || fromId === target.id) return;
+    const nonStar = list.filter((i) => !i.phase_critical);
+    const ids = nonStar.map((i) => i.id);
+    const from = ids.indexOf(fromId), to = ids.indexOf(target.id);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    handlers.onReorder(ids);
+  }
 
   useEffect(() => {
     try { const s = localStorage.getItem('cw_collapsed'); if (s) setCollapsed(JSON.parse(s)); } catch {}
@@ -341,11 +456,13 @@ function PlanView({ org, items, comments, acks, email, isManager, plan, handlers
         const done = all.filter((i) => i.status === 'done').length;
         const pct = all.length ? Math.round((done / all.length) * 100) : 0;
         const isCol = !!collapsed[ph.n];
+        const endLbl = phaseEndLabel(plan, ph.n);
         return (
           <section className="phase" key={ph.n}>
             <div className={`phase-head ${isCol ? 'collapsed' : ''}`} onClick={() => togglePhase(ph.n)}>
               <span className="caret">▼</span>
               <h3>{ph.range} · {ph.name}</h3>
+              {endLbl && <span className="phase-end">ends {endLbl}</span>}
               <span className="q">{ph.q}</span>
               <span className="count">{done}/{all.length} done{anyFilter ? ` · ${phItems.length} shown` : ''}</span>
             </div>
@@ -354,13 +471,17 @@ function PlanView({ org, items, comments, acks, email, isManager, plan, handlers
                 <div className="progress"><div style={{ width: `${pct}%` }} /></div>
                 <div className="tracks">
                   {['impact', 'acclimation'].map((tr) => {
-                    const list = phItems.filter((i) => i.track === tr);
+                    const list = orderItems(phItems.filter((i) => i.track === tr));
                     return (
                       <div className="track" key={tr}>
                         <h4>{tr === 'impact' ? 'Impact — strategic priorities' : 'Acclimation — team, culture & values'}</h4>
                         {list.length === 0 && <div className="empty-track">{anyFilter ? 'Nothing matches the filters here.' : 'Nothing here yet.'}</div>}
                         {list.map((i) => (
-                          <ItemCard key={i.id} item={i} org={org} plan={plan} email={email} isManager={isManager} flag={flagFor(i, acks, email)} comments={comments} {...handlers} />
+                          <ItemTile key={i.id} item={i} flag={flagFor(i, acks, email)} onOpen={(it) => setOpenId(it.id)}
+                            draggable={!i.phase_critical}
+                            onDragStart={() => { dragRef.current = i.id; }}
+                            onDragOver={(e) => { if (!i.phase_critical) e.preventDefault(); }}
+                            onDrop={(e) => { e.preventDefault(); if (!i.phase_critical) dropOn(list, i); }} />
                         ))}
                       </div>
                     );
@@ -371,6 +492,7 @@ function PlanView({ org, items, comments, acks, email, isManager, plan, handlers
           </section>
         );
       })}
+      {openItem && <ItemDrawer item={openItem} org={org} plan={plan} email={email} isManager={isManager} flag={flagFor(openItem, acks, email)} comments={comments} handlers={handlers} onClose={() => setOpenId(null)} />}
     </>
   );
 }
@@ -388,31 +510,51 @@ function AddView({ plan, org, isManager, email, reqs, handlers }) {
             <button key={k} className={`mt ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)}>{l}</button>
           ))}
         </div>
-        {mode === 'manual' && <ItemForm org={org} onSubmit={(patch) => handlers.addItem(patch)} submitLabel={isManager ? 'Add to plan' : 'Submit for approval'} />}
+        {mode === 'manual' && <ItemForm org={org} draftKey={`bi_${plan.id}`} onSubmit={(patch) => handlers.addItem(patch)} submitLabel={isManager ? 'Add to plan' : 'Submit for approval'} />}
         {mode === 'ai' && <AiAssist plan={plan} org={org} onUse={(patch) => handlers.addItem(patch)} isManager={isManager} />}
         {mode === 'meeting' && <MeetingImport plan={plan} org={org} onAdd={(patch) => handlers.addItem(patch)} isManager={isManager} />}
       </div>
 
       <div className="panel">
         <h3>Requests</h3>
-        <p className="sub">{isManager ? 'New-leader proposals awaiting your call.' : 'Your proposals and where they stand.'}</p>
+        <p className="sub">{isManager ? 'New-leader proposals awaiting your call — review and modify before adding.' : 'Your proposals and where they stand.'}</p>
         {reqs.length === 0 && <p className="sub">Nothing here yet.</p>}
         {reqs.map((r) => (
-          <div className="req" key={r.id}>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <div className="raw"><b>{r.ai_suggestion?.title || r.raw_text}</b></div>
-              <span className={`pill ${r.status}`}>{r.status}</span>
-            </div>
-            <div className="small muted">{r.raw_text}{r.source_url ? ` · from meeting` : ''} · by {r.requested_by} · {fmtDate(r.created_at?.slice(0, 10))}</div>
-            {isManager && r.status === 'pending' && (
-              <div className="row" style={{ marginTop: 10 }}>
-                <button className="btn sm" onClick={() => handlers.resolveReq(r, true)}>Approve → add to plan</button>
-                <button className="btn ghost sm" onClick={() => handlers.resolveReq(r, false)}>Decline</button>
-              </div>
-            )}
-          </div>
+          <RequestRow key={r.id} req={r} org={org} isManager={isManager} handlers={handlers} />
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ---------- One employee proposal, leader reviews with an editable form (item 6) ---------- */
+function RequestRow({ req, org, isManager, handlers }) {
+  const [reviewing, setReviewing] = useState(false);
+  const [denyNote, setDenyNote] = useState('');
+  const s = req.ai_suggestion || {};
+  return (
+    <div className="req">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="raw"><b>{s.title || req.raw_text}</b></div>
+        <span className={`pill ${req.status}`}>{req.status}</span>
+      </div>
+      <div className="small muted">{req.raw_text}{req.source_url ? ` · from meeting` : ''} · by {req.requested_by} · {fmtDate(req.created_at?.slice(0, 10))}{s.denial_comment ? ` · declined: “${s.denial_comment}”` : ''}</div>
+      {isManager && req.status === 'pending' && !reviewing && (
+        <div className="row" style={{ marginTop: 10 }}><button className="btn sm" onClick={() => setReviewing(true)}>Review →</button></div>
+      )}
+      {isManager && req.status === 'pending' && reviewing && (
+        <div style={{ marginTop: 10 }}>
+          <ItemForm org={org}
+            initial={{ title: s.title || req.raw_text, phase: s.phase, track: s.track, tags: parseTags(s.tags), success_measure: s.success_measure, phase_critical: s.phase_critical }}
+            onCancel={() => setReviewing(false)}
+            onSubmit={async (patch) => { const ok = await handlers.resolveReq(req, true, patch); if (ok !== false) setReviewing(false); return ok; }}
+            submitLabel="Approve → add to plan" />
+          <div className="row" style={{ marginTop: 8 }}>
+            <input style={{ flex: 1 }} placeholder="Optional comment if declining…" value={denyNote} onChange={(e) => setDenyNote(e.target.value)} />
+            <button className="btn ghost sm" onClick={() => { handlers.resolveReq(req, false, null, denyNote.trim()); setReviewing(false); }}>Decline</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -476,7 +618,9 @@ function smartListKeyDown(e, setValue) {
 }
 
 function AiAssist({ plan, org, onUse, isManager }) {
-  const [raw, setRaw] = useState('');
+  const dk = `ai_${plan.id}`;
+  const [raw, setRawState] = useState(() => draftGet(dk));
+  const setRaw = (v) => { const val = typeof v === 'function' ? v(raw) : v; setRawState(val); draftSet(dk, val); };
   const [cands, setCands] = useState(null);
   const [source, setSource] = useState('');
   const [busy, setBusy] = useState(false);
@@ -502,7 +646,7 @@ function AiAssist({ plan, org, onUse, isManager }) {
       {cands && cands.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <p className="small muted" style={{ marginBottom: 8 }}>{cands.length} item(s) structured by {source === 'ai' ? 'AI against the current OnePage' : 'keyword matching'} — review, modify, and add each.</p>
-          <Carousel items={cands} org={org} isManager={isManager} onAdd={onUse} onRemove={(x) => setCands((cs) => cs.filter((_, n) => n !== x))} />
+          <Carousel items={cands} org={org} isManager={isManager} onAdd={onUse} onRemove={(x) => setCands((cs) => { const next = cs.filter((_, n) => n !== x); if (next.length === 0) { setRawState(''); draftClear(dk); } return next; })} />
         </div>
       )}
     </div>
@@ -510,8 +654,11 @@ function AiAssist({ plan, org, onUse, isManager }) {
 }
 
 function MeetingImport({ plan, org, onAdd, isManager }) {
-  const [url, setUrl] = useState('');
-  const [transcript, setTranscript] = useState('');
+  const dk = `mt_${plan.id}`;
+  const [url, setUrlState] = useState(() => draftGet(dk + '_u'));
+  const setUrl = (v) => { setUrlState(v); draftSet(dk + '_u', v); };
+  const [transcript, setTranscriptState] = useState(() => draftGet(dk));
+  const setTranscript = (v) => { const val = typeof v === 'function' ? v(transcript) : v; setTranscriptState(val); draftSet(dk, val); };
   const [busy, setBusy] = useState(false);
   const [cands, setCands] = useState(null);
   async function generate() {
@@ -538,7 +685,7 @@ function MeetingImport({ plan, org, onAdd, isManager }) {
       {cands && cands.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <p className="small muted" style={{ marginBottom: 8 }}>{cands.length} candidate item(s). Review, modify, and add each.</p>
-          <Carousel items={cands.map((c) => ({ ...c, source_url: url }))} org={org} isManager={isManager} onAdd={onAdd} onRemove={(x) => setCands((cs) => cs.filter((_, n) => n !== x))} />
+          <Carousel items={cands.map((c) => ({ ...c, source_url: url }))} org={org} isManager={isManager} onAdd={onAdd} onRemove={(x) => setCands((cs) => { const next = cs.filter((_, n) => n !== x); if (next.length === 0) { setTranscriptState(''); setUrlState(''); draftClear(dk, dk + '_u'); } return next; })} />
         </div>
       )}
     </div>
@@ -640,11 +787,13 @@ function PrepView({ plan, items, cks }) {
 
 /* ---------- Journal (item 13) ---------- */
 function JournalView({ plan, email, entries, items, reload }) {
-  const [body, setBody] = useState('');
+  const dk = `jr_${plan.id}`;
+  const [body, setBodyState] = useState(() => draftGet(dk));
+  const setBody = (v) => { const val = typeof v === 'function' ? v(body) : v; setBodyState(val); draftSet(dk, val); };
   async function add() {
     const { error } = await supabase.from('journal_entries').insert({ plan_id: plan.id, author_email: email, body, source: 'journal' });
     if (error) return alert(error.message);
-    setBody(''); reload();
+    setBodyState(''); draftClear(dk); reload();
   }
   const titleOf = (id) => items.find((i) => i.id === id)?.title;
   return (
@@ -802,6 +951,57 @@ function AckGate({ items, org, onAck, onAckAll, busy }) {
   );
 }
 
+/* ---------- Employee info module (leader; items 1-2) ---------- */
+function EmployeeInfoView({ plan, reload }) {
+  const [f, setF] = useState({
+    employee_name: plan.employee_name || '', employee_email: plan.employee_email || '',
+    role_title: plan.role_title || '', start_date: plan.start_date || '',
+    plan_start_date: plan.plan_start_date || plan.start_date || '', day_mode: plan.day_mode || 'calendar',
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  async function save() {
+    setBusy(true);
+    const { error } = await supabase.from('plans').update({
+      employee_name: f.employee_name.trim(), employee_email: f.employee_email.trim().toLowerCase(),
+      role_title: f.role_title.trim() || 'New leader', start_date: f.start_date || null,
+      plan_start_date: f.plan_start_date || null, day_mode: f.day_mode,
+    }).eq('id', plan.id);
+    setBusy(false);
+    if (error) alert(error.message); else { alert('Employee info saved.'); reload(); }
+  }
+  return (
+    <div className="panel">
+      <h3>Employee info</h3>
+      <p className="sub">The plan start date anchors the 30/60/90 phase windows; toggle whether days count as business days (M–F) or calendar days. Changing the email moves their login access to the new address.</p>
+      <div className="row">
+        <div className="field" style={{ flex: 1, minWidth: 200 }}><label>Name</label><input value={f.employee_name} onChange={(e) => set('employee_name', e.target.value)} /></div>
+        <div className="field" style={{ flex: 1, minWidth: 220 }}><label>Work email</label><input type="email" value={f.employee_email} onChange={(e) => set('employee_email', e.target.value)} /></div>
+      </div>
+      <div className="field"><label>Role title</label><input value={f.role_title} onChange={(e) => set('role_title', e.target.value)} /></div>
+      <div className="row">
+        <div className="field"><label>Employee start date</label><input type="date" value={f.start_date || ''} onChange={(e) => set('start_date', e.target.value)} /></div>
+        <div className="field"><label>Plan start date</label><input type="date" value={f.plan_start_date || ''} onChange={(e) => set('plan_start_date', e.target.value)} /></div>
+        <div className="field"><label>Phase days count as</label>
+          <div className="seg">
+            {[['calendar', 'Calendar days'], ['business', 'Business days (M–F)']].map(([v, l]) => (
+              <span key={v} className={`opt ${f.day_mode === v ? 'on' : ''}`} onClick={() => set('day_mode', v)}>{l}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+      {f.plan_start_date && (
+        <p className="small muted" style={{ marginBottom: 12 }}>
+          Phase ends: Day 30 → <b>{phaseEndLabel({ plan_start_date: f.plan_start_date, day_mode: f.day_mode }, 30)}</b> ·
+          Day 60 → <b>{phaseEndLabel({ plan_start_date: f.plan_start_date, day_mode: f.day_mode }, 60)}</b> ·
+          Day 90 → <b>{phaseEndLabel({ plan_start_date: f.plan_start_date, day_mode: f.day_mode }, 90)}</b>
+        </p>
+      )}
+      <button className="btn" disabled={busy || !f.employee_email.includes('@')} onClick={save}>{busy ? 'Saving…' : 'Save employee info'}</button>
+    </div>
+  );
+}
+
 /* ---------- App shell ---------- */
 const NAV = (isManager, newCount) => [
   { k: 'plan', label: '30/60/90 Plan', ic: '▤', badge: newCount || 0 },
@@ -810,6 +1010,7 @@ const NAV = (isManager, newCount) => [
   { k: 'journal', label: 'Journal', ic: '✎' },
   { k: 'activity', label: 'Activity', ic: '⟳' },
   { k: 'download', label: 'Download', ic: '⬇' },
+  ...(isManager ? [{ k: 'info', label: 'Employee Info', ic: 'ⓘ' }] : []),
 ];
 
 /* ---------- Team Overview (leader combined view across employees) ---------- */
@@ -858,7 +1059,9 @@ function TeamOverview({ plans, byPlan, org, onOpen, handlers }) {
                 <div className="card" key={i.id}>
                   <div className="title">
                     <span className="empchip" onClick={() => onOpen(i.plan_id)} title="Open this plan">{i._emp}</span>
+                    <span className="refno">#{i.ref_no || '–'}</span>
                     <span className="txt">{i.phase_critical ? '★ ' : ''}{i.title}</span>
+                    {i.pending_edit && <span className="pendchip">APPROVAL PENDING</span>}
                   </div>
                   <div className="card-foot">
                     {(i.tags || []).map((t) => <Tag key={t} code={t} org={org} />)}
@@ -982,10 +1185,56 @@ function App({ session }) {
   async function ackAll(list) { const rows = list.map((i) => ({ plan_id: i.plan_id, plan_item_id: i.id, user_email: email, ack_version: i.content_version || 1, acknowledged_at: new Date().toISOString() })); if (rows.length) await supabase.from('item_acknowledgements').upsert(rows, { onConflict: 'plan_item_id,user_email' }); load(); }
   async function onStatus(item, status) { let evidence = item.evidence; if (status === 'done' && !evidence) { evidence = window.prompt(`Marking done. What's the evidence?\n\n"${item.success_measure}"`); if (evidence === null) return; } const { error } = await supabase.from('plan_items').update({ status, evidence }).eq('id', item.id); if (error) alert(error.message); else load(); }
   async function onTogglePriority(item) { const { error } = await supabase.from('plan_items').update({ phase_critical: !item.phase_critical }).eq('id', item.id); if (error) alert(error.message.includes('two active priorities') ? `Phase ${item.phase} already has two active priorities. Mark one Done or unflag it first.` : error.message); else load(); }
-  async function onSave(item, patch) { const { error } = await supabase.from('plan_items').update({ title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }).eq('id', item.id); if (error) { alert(friendly(error.message, patch.phase)); return false; } load(); return true; }
-  async function onDelete(item) { if (!window.confirm(`Delete “${item.title}”? This is logged.`)) return; const { error } = await supabase.from('plan_items').delete().eq('id', item.id); if (error) alert(error.message); else load(); }
+  async function onSave(item, patch, note) {
+    const fields = { title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical };
+    // Employee editing an item they didn't create: change applies immediately but goes back
+    // to the leader for approval, with the prior content kept so a decline can revert (item 3).
+    if (!isManager && !eq(item.created_by, email)) {
+      fields.pending_edit = {
+        prior: { title: item.title, phase: item.phase, track: item.track, tags: item.tags, success_measure: item.success_measure, phase_critical: item.phase_critical },
+        comment: note || null, requested_by: email, at: new Date().toISOString(),
+      };
+    }
+    const { error } = await supabase.from('plan_items').update(fields).eq('id', item.id);
+    if (error) { alert(friendly(error.message, patch.phase)); return false; }
+    load(); return true;
+  }
+  async function onResolveEdit(item, approve, note) {
+    const pe = item.pending_edit;
+    if (!pe) return;
+    if (approve) {
+      const { error } = await supabase.from('plan_items').update({ pending_edit: null }).eq('id', item.id);
+      if (error) return alert(error.message);
+    } else {
+      const p = pe.prior || {};
+      const { error } = await supabase.from('plan_items').update({ title: p.title, phase: p.phase, track: p.track, tags: p.tags, success_measure: p.success_measure, phase_critical: p.phase_critical, pending_edit: null }).eq('id', item.id);
+      if (error) return alert(friendly(error.message, p.phase));
+      if (note) await supabase.from('comments').insert({ plan_id: item.plan_id, plan_item_id: item.id, author_email: email, body: `Edit declined: ${note}`, private: false });
+    }
+    load();
+  }
+  async function onReorder(orderedIds) {
+    // Persist drag & drop order for non-starred items (item 8); spaced to leave room.
+    for (let i = 0; i < orderedIds.length; i++) {
+      await supabase.from('plan_items').update({ sort_order: (i + 1) * 10 }).eq('id', orderedIds[i]);
+    }
+    load();
+  }
+  async function onDelete(item) { if (!window.confirm(`Delete “${item.title}” (#${item.ref_no})? This is logged.`)) return; const { error } = await supabase.from('plan_items').delete().eq('id', item.id); if (error) alert(error.message); else load(); }
   async function addItem(patch, target) { if (isManager) { const { error } = await supabase.from('plan_items').insert({ plan_id: target.id, phase: patch.phase, track: patch.track, tags: patch.tags, title: patch.title, success_measure: patch.success_measure, phase_critical: patch.phase_critical, source: 'manager_added', created_by: email }); if (error) { alert(friendly(error.message, patch.phase)); return false; } } else { const { error } = await supabase.from('ad_hoc_requests').insert({ plan_id: target.id, raw_text: patch.title, ai_suggestion: { title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }, requested_by: email, source_type: patch.source_url ? 'fireflies' : 'text', source_url: patch.source_url || null }); if (error) { alert(error.message); return false; } } load(); return true; }
-  async function resolveReq(req, approve) { if (approve) { const s = req.ai_suggestion || {}; const { error } = await supabase.from('plan_items').insert({ plan_id: req.plan_id, phase: +(s.phase || 60), track: s.track || 'impact', tags: parseTags(s.tags), title: s.title || req.raw_text.slice(0, 140), success_measure: s.success_measure || 'Define “done” together at the next dialogue', phase_critical: !!s.phase_critical, source: 'employee_proposed', created_by: req.requested_by }); if (error) return alert(friendly(error.message, s.phase)); await supabase.from('ad_hoc_requests').update({ status: 'approved', approved_by: email }).eq('id', req.id); } else { await supabase.from('ad_hoc_requests').update({ status: 'rejected', approved_by: email }).eq('id', req.id); } load(); }
+  async function resolveReq(req, approve, patch, denyNote) {
+    if (approve) {
+      const s = patch || req.ai_suggestion || {};
+      const { error } = await supabase.from('plan_items').insert({ plan_id: req.plan_id, phase: +(s.phase || 60), track: s.track || 'impact', tags: parseTags(s.tags), title: s.title || req.raw_text.slice(0, 140), success_measure: s.success_measure || 'Define “done” together at the next dialogue', phase_critical: !!s.phase_critical, source: 'employee_proposed', created_by: req.requested_by });
+      if (error) { alert(friendly(error.message, s.phase)); return false; }
+      await supabase.from('ad_hoc_requests').update({ status: 'approved', approved_by: email, ai_suggestion: { ...(req.ai_suggestion || {}), ...s } }).eq('id', req.id);
+    } else {
+      const sug = { ...(req.ai_suggestion || {}) };
+      if (denyNote) sug.denial_comment = denyNote;
+      await supabase.from('ad_hoc_requests').update({ status: 'rejected', approved_by: email, ai_suggestion: sug }).eq('id', req.id);
+    }
+    load(); return true;
+  }
   async function onComment(item, body, priv) { let error; if (priv) ({ error } = await supabase.from('journal_entries').insert({ plan_id: item.plan_id, author_email: email, body, source: 'private_comment', plan_item_id: item.id })); else ({ error } = await supabase.from('comments').insert({ plan_id: item.plan_id, plan_item_id: item.id, author_email: email, body, private: false })); if (error) { alert(error.message); return false; } load(); return true; }
   async function onDeleteComment(c) { const { error } = await supabase.from('comments').delete().eq('id', c.id); if (error) alert(error.message); else load(); }
 
@@ -1005,7 +1254,7 @@ function App({ session }) {
     return { plan: np, invite };
   }
 
-  const handlers = { onStatus, onDelete, onSave, onTogglePriority, onAck: ackItem, ackAll, onComment, onDeleteComment, addItem, resolveReq };
+  const handlers = { onStatus, onDelete, onSave, onTogglePriority, onAck: ackItem, ackAll, onComment, onDeleteComment, addItem, resolveReq, onResolveEdit, onReorder };
 
   /* ---------- Employee experience (own plan only) ---------- */
   if (!isManager) {
@@ -1064,6 +1313,7 @@ function App({ session }) {
           {selPlan && tab === 'journal' && <JournalView plan={selPlan} email={email} entries={by.journal[selPlan.id] || []} items={sItems} reload={load} />}
           {selPlan && tab === 'activity' && <ActivityView events={by.events[selPlan.id] || []} isManager />}
           {selPlan && tab === 'download' && <DownloadView plan={selPlan} org={org} items={sItems} notes={by.notes[selPlan.id] || []} isManager email={email} reload={load} />}
+          {selPlan && tab === 'info' && <EmployeeInfoView plan={selPlan} reload={load} />}
         </main>
       </div>
     </>
