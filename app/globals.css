@@ -57,6 +57,9 @@ a { color: var(--cw-blue); }
 .sidebar .navbtn .ic { width: 18px; text-align: center; }
 .sidebar .navbtn .badge { margin-left: auto; background: var(--cw-new); color: #4a3500; font-size: 11px; font-weight: 800; border-radius: 999px; padding: 1px 7px; }
 .sidebar .navbtn.active .badge { background: #fff; color: var(--cw-blue); }
+.sidebar .navsec { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cw-gray-mid); margin: 14px 8px 4px; }
+.sidebar .navbtn.addemp { color: var(--cw-blue); border: 1px dashed var(--cw-gray-light); margin-top: 4px; }
+.empchip { background: var(--cw-navy); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700; cursor: pointer; flex: none; }
 .main { flex: 1; min-width: 0; padding: 20px 24px 90px; }
 
 /* mobile drawer backdrop */
@@ -166,6 +169,15 @@ a { color: var(--cw-blue); }
 .mode-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
 .mode-tabs .mt { border: 1px solid var(--cw-gray-light); background: #fff; border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight: 700; color: var(--cw-gray-mid); }
 .mode-tabs .mt.on { background: var(--cw-navy); border-color: var(--cw-navy); color: #fff; }
+
+/* Add to Plan — black section text for contrast */
+.addview h3 { color: #111; }
+.addview .sub { color: #111; }
+
+/* Candidate carousel (AI assist + meeting import) */
+.carousel { border: 1px solid var(--cw-gray-light); border-radius: 12px; padding: 12px; background: var(--cw-off-white); }
+.carousel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.carousel-count { font-size: 12.5px; font-weight: 700; color: var(--cw-navy); }
 
 /* Check-in rows */
 .ci-row { border-top: 1px solid var(--cw-gray-light); padding: 14px 0; }

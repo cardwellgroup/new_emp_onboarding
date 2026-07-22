@@ -9,8 +9,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const PHASES = [
   { n: 30, name: 'Learn & Map', range: 'Day 1–30', q: 'Do I understand the business, the team, and where the friction is?' },
-  { n: 60, name: 'Own & Operate', range: 'Day 31–60', q: 'Am I running my areas without being chased — and is anyone noticing?' },
-  { n: 90, name: 'Systemize & Scale', range: 'Day 61–90', q: 'Have I built things that outlast me and move the strategy?' },
+  { n: 60, name: 'Own & Operate', range: 'Day 31–60', q: 'Am I running my areas with the right Commitments and established the Cadence of Accountability?' },
+  { n: 90, name: 'Systemize & Scale', range: 'Day 61–90', q: 'Have I built value and moved our strategy forward towards the Pinnacle?' },
 ];
 const phaseLabel = (n) => { const p = PHASES.find((x) => x.n === n); return p ? `${p.range} · ${p.name}` : `Day ${n}`; };
 const STATUSES = [
@@ -379,7 +379,7 @@ function PlanView({ org, items, comments, acks, email, isManager, plan, handlers
 function AddView({ plan, org, isManager, email, reqs, handlers }) {
   const [mode, setMode] = useState('manual');
   return (
-    <>
+    <div className="addview">
       <div className="panel">
         <h3>Add to the plan</h3>
         <p className="sub">Structure work against the OnePage priorities and values. {isManager ? 'Items you add land on the plan and the new leader must acknowledge them.' : 'Your additions go to the leader for approval.'}</p>
@@ -413,34 +413,67 @@ function AddView({ plan, org, isManager, email, reqs, handlers }) {
           </div>
         ))}
       </div>
-    </>
+    </div>
+  );
+}
+
+/* ---------- Carousel of generated candidate items (AI assist + meeting import) ---------- */
+function Carousel({ items, org, isManager, onAdd, onRemove }) {
+  const [i, setI] = useState(0);
+  if (!items || items.length === 0) return null;
+  const idx = Math.min(i, items.length - 1);
+  const c = items[idx];
+  return (
+    <div className="carousel">
+      <div className="carousel-head">
+        <button className="btn ghost sm" disabled={idx === 0} onClick={() => setI(idx - 1)}>‹ Prev</button>
+        <span className="carousel-count">Item {idx + 1} of {items.length}</span>
+        <button className="btn ghost sm" disabled={idx >= items.length - 1} onClick={() => setI(idx + 1)}>Next ›</button>
+      </div>
+      {c.rationale && <p className="small muted" style={{ margin: '0 0 8px' }}>Why: {c.rationale}</p>}
+      <ItemForm
+        key={idx}
+        org={org}
+        initial={{ title: c.title, phase: c.phase, track: c.track, tags: parseTags(c.tags), success_measure: c.success_measure, phase_critical: c.phase_critical }}
+        onSubmit={async (patch) => {
+          const ok = await onAdd({ ...patch, source_url: c.source_url });
+          if (ok) { onRemove(idx); setI((p) => Math.max(0, Math.min(p, items.length - 2))); }
+          return ok;
+        }}
+        submitLabel={isManager ? 'Add to plan' : 'Submit for approval'}
+      />
+    </div>
   );
 }
 
 function AiAssist({ plan, org, onUse, isManager }) {
   const [raw, setRaw] = useState('');
-  const [sug, setSug] = useState(null);
+  const [cands, setCands] = useState(null);
+  const [source, setSource] = useState('');
   const [busy, setBusy] = useState(false);
   async function suggest() {
     setBusy(true);
     try {
       const r = await fetch('/api/structure', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw, one_page: org.one_page, core_values: org.core_values, role_title: plan.role_title }) });
       const j = await r.json();
-      setSug(j);
-    } catch { alert('Could not generate a suggestion — try again.'); }
+      setSource(j.source);
+      setCands(j.items || []);
+    } catch { alert('Could not generate suggestions — try again.'); }
     setBusy(false);
   }
   return (
     <div>
+      <p className="sub">List one or more projects, focus areas, or relationships — number them or put one per line. Each becomes a full plan item you can review, edit, and add.</p>
       <div className="row" style={{ flexWrap: 'nowrap' }}>
-        <textarea rows={3} style={{ flex: 1 }} placeholder="Describe a project, focus area, or relationship in plain language…" value={raw} onChange={(e) => setRaw(e.target.value)} />
+        <textarea rows={4} style={{ flex: 1 }} placeholder={'1. Take over the monthly Sypher delivery-credit review\n2. Build relationships across the Connections product team\n3. Document the onboarding runbook'} value={raw} onChange={(e) => setRaw(e.target.value)} />
         <Mic onText={(t) => setRaw((v) => (v ? v + ' ' : '') + t)} />
       </div>
-      <div className="row" style={{ marginTop: 10 }}><button className="btn" disabled={busy || raw.trim().length < 8} onClick={suggest}>{busy ? 'Structuring…' : 'Structure it'}</button></div>
-      {sug && (
+      <div className="row" style={{ marginTop: 10 }}><button className="btn" disabled={busy || raw.trim().length < 8} onClick={suggest}>{busy ? 'Structuring…' : 'Structure items'}</button></div>
+      {cands && cands.length === 0 && <p className="sub" style={{ marginTop: 12 }}>Couldn&apos;t pull items from that — try listing them more explicitly.</p>}
+      {cands && cands.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <p className="small muted" style={{ marginBottom: 8 }}>Suggested by {sug.source === 'ai' ? 'AI against the current OnePage' : 'keyword matching'} — review and adjust before adding.</p>
-          <ItemForm org={org} initial={{ title: sug.title, phase: sug.phase, track: sug.track, tags: parseTags(sug.tags), success_measure: sug.success_measure }} onSubmit={(patch) => onUse(patch)} submitLabel={isManager ? 'Add to plan' : 'Submit for approval'} />
+          <p className="small muted" style={{ marginBottom: 8 }}>{cands.length} item(s) structured by {source === 'ai' ? 'AI against the current OnePage' : 'keyword matching'} — review, modify, and add each.</p>
+          <Carousel items={cands} org={org} isManager={isManager} onAdd={onUse} onRemove={(x) => setCands((cs) => cs.filter((_, n) => n !== x))} />
         </div>
       )}
     </div>
@@ -463,24 +496,20 @@ function MeetingImport({ plan, org, onAdd, isManager }) {
   }
   return (
     <div>
-      <p className="sub">Paste a meeting link (e.g. Fireflies) for reference and the transcript text. We&apos;ll pull out candidate plan items for you to review and approve.</p>
-      <div className="field"><label>Meeting link (optional)</label><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://app.fireflies.ai/view/…" /></div>
+      <p className="sub">Paste a meeting link (e.g. Fireflies) or the transcript text — at least one. We&apos;ll pull out candidate plan items for you to review and approve.</p>
+      <div className="field"><label>Meeting link</label><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://app.fireflies.ai/view/…" /></div>
       <div className="field"><label>Transcript</label>
         <div className="row" style={{ flexWrap: 'nowrap' }}>
           <textarea rows={5} style={{ flex: 1 }} placeholder="Paste the meeting transcript here…" value={transcript} onChange={(e) => setTranscript(e.target.value)} />
           <Mic onText={(t) => setTranscript((v) => (v ? v + ' ' : '') + t)} />
         </div>
       </div>
-      <button className="btn" disabled={busy || transcript.trim().length < 20} onClick={generate}>{busy ? 'Reading the meeting…' : 'Generate items'}</button>
+      <button className="btn" disabled={busy || (transcript.trim().length < 20 && !url.trim())} onClick={generate}>{busy ? 'Reading the meeting…' : 'Generate items'}</button>
       {cands && cands.length === 0 && <p className="sub" style={{ marginTop: 12 }}>No clear action items found — try a longer transcript.</p>}
       {cands && cands.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <p className="small muted" style={{ marginBottom: 8 }}>{cands.length} candidate item(s). Review each and add.</p>
-          {cands.map((c, idx) => (
-            <ItemForm key={idx} org={org} initial={{ title: c.title, phase: c.phase, track: c.track, tags: parseTags(c.tags), success_measure: c.success_measure }}
-              onSubmit={async (patch) => { const ok = await onAdd({ ...patch, source_url: url }); if (ok) setCands((cs) => cs.filter((_, i) => i !== idx)); }}
-              submitLabel={isManager ? 'Add to plan' : 'Submit for approval'} />
-          ))}
+          <p className="small muted" style={{ marginBottom: 8 }}>{cands.length} candidate item(s). Review, modify, and add each.</p>
+          <Carousel items={cands.map((c) => ({ ...c, source_url: url }))} org={org} isManager={isManager} onAdd={onAdd} onRemove={(x) => setCands((cs) => cs.filter((_, n) => n !== x))} />
         </div>
       )}
     </div>
@@ -754,152 +783,258 @@ const NAV = (isManager, newCount) => [
   { k: 'download', label: 'Download', ic: '⬇' },
 ];
 
+/* ---------- Team Overview (leader combined view across employees) ---------- */
+function TeamOverview({ plans, byPlan, org, onOpen, handlers }) {
+  const [empF, setEmpF] = useState([]);
+  const [statusF, setStatusF] = useState([]);
+  const [phaseF, setPhaseF] = useState([]);
+  const all = plans.flatMap((p) => (byPlan.items[p.id] || []).map((i) => ({ ...i, _emp: p.employee_name || p.employee_email })));
+  const toggle = (v, set) => set((f) => (f.includes(v) ? f.filter((x) => x !== v) : [...f, v]));
+  const match = (i) => (empF.length === 0 || empF.includes(i.plan_id)) && (statusF.length === 0 || statusF.includes(i.status)) && (phaseF.length === 0 || phaseF.includes(i.phase));
+  const anyF = empF.length || statusF.length || phaseF.length;
+  const done = all.filter((i) => i.status === 'done').length;
+  return (
+    <>
+      <div className="panel">
+        <h3>Team overview</h3>
+        <p className="sub">Everyone reporting to you, grouped by phase. Filter by employee, status, and phase — combinable (e.g. 90-day items that need your approval).</p>
+        <div className="row" style={{ justifyContent: 'flex-start' }}>
+          <div className="stat"><div className="n">{plans.length}</div><div className="l">employees</div></div>
+          <div className="stat"><div className="n">{all.length}</div><div className="l">items</div></div>
+          <div className="stat"><div className="n">{done}</div><div className="l">done</div></div>
+        </div>
+      </div>
+      <div className="filters no-print">
+        <span className="flabel">Employee</span>
+        {plans.map((p) => <button key={p.id} className={`fchip ${empF.includes(p.id) ? 'on' : ''}`} onClick={() => toggle(p.id, setEmpF)}>{p.employee_name || p.employee_email}</button>)}
+        <span className="sep" />
+        <span className="flabel">Status</span>
+        {STATUSES.map(([v, l]) => <button key={v} className={`fchip ${statusF.includes(v) ? 'on' : ''}`} onClick={() => toggle(v, setStatusF)}>{l}</button>)}
+        <span className="sep" />
+        <span className="flabel">Phase</span>
+        {PHASES.map((p) => <button key={p.n} className={`fchip ${phaseF.includes(p.n) ? 'on' : ''}`} onClick={() => toggle(p.n, setPhaseF)}>{p.range}</button>)}
+        {anyF ? <button className="clearf" onClick={() => { setEmpF([]); setStatusF([]); setPhaseF([]); }}>Clear</button> : null}
+      </div>
+      {PHASES.map((ph) => {
+        const list = all.filter((i) => i.phase === ph.n && match(i));
+        return (
+          <section className="phase" key={ph.n}>
+            <div className="phase-head" style={{ cursor: 'default' }}>
+              <h3>{ph.range} · {ph.name}</h3>
+              <span className="count">{list.length} item(s)</span>
+            </div>
+            <div className="phase-body">
+              {list.length === 0 && <div className="empty-track">Nothing here{anyF ? ' for these filters' : ''}.</div>}
+              {list.map((i) => (
+                <div className="card" key={i.id}>
+                  <div className="title">
+                    <span className="empchip" onClick={() => onOpen(i.plan_id)} title="Open this plan">{i._emp}</span>
+                    <span className="txt">{i.phase_critical ? '★ ' : ''}{i.title}</span>
+                  </div>
+                  <div className="card-foot">
+                    {(i.tags || []).map((t) => <Tag key={t} code={t} org={org} />)}
+                    <span className={`status ${i.status}`}>{statusLabel(i.status)}</span>
+                    <select value={i.status} onChange={(e) => handlers.onStatus(i, e.target.value)} style={{ marginLeft: 'auto' }} aria-label="Status">
+                      {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                    <button className="iconbtn" onClick={() => onOpen(i.plan_id)}>Open →</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+/* ---------- Add Employee (leader) ---------- */
+function AddEmployee({ onClose, onCreate }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('');
+  const [desc, setDesc] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  async function submit() {
+    setBusy(true);
+    const r = await onCreate({ name: name.trim(), email: email.trim().toLowerCase(), role_title: role.trim(), role_description: desc.trim() });
+    setBusy(false);
+    if (r.error) { alert(r.error); return; }
+    setResult(r);
+  }
+  return (
+    <div className="modal-back">
+      <div className="modal">
+        <Logo />
+        {!result ? (
+          <>
+            <h2>Add an employee</h2>
+            <p className="sub">We&apos;ll generate a starter 30/60/90 plan from the Cardwell OnePage, the values, and this role — a draft you both refine. Add any mandatory items yourself afterward.</p>
+            <div className="field"><label>Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></div>
+            <div className="field"><label>Work email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@cardwellgroup.com" /></div>
+            <div className="field"><label>Role title</label><input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Operations &amp; Enablement Lead" /></div>
+            <div className="field"><label>Job role description</label><textarea rows={5} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="What this role owns, key responsibilities, scope…" /></div>
+            <div className="row">
+              <button className="btn" disabled={busy || !name.trim() || !email.includes('@')} onClick={submit}>{busy ? 'Creating &amp; generating…' : 'Add employee & generate plan'}</button>
+              <button className="btn ghost" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2>{name || 'Employee'} added</h2>
+            <p className="sub">A starter plan was generated.{result.invite?.emailed ? ' An invite email was sent to them.' : ''}</p>
+            {result.invite?.link ? (
+              <div className="field"><label>Copyable sign-in link (send to {email})</label><textarea rows={3} readOnly value={result.invite.link} onClick={(e) => e.target.select()} /></div>
+            ) : (
+              <p className="sub">{result.invite?.note || `${email} can sign in at this app by entering their email to get a magic link — their plan already authorizes them.`}</p>
+            )}
+            <div className="row"><button className="btn" onClick={onClose}>Done</button></div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App({ session }) {
   const email = session.user.email.toLowerCase();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [view, setView] = useState('team'); // 'team' or a plan id (leader)
   const [tab, setTab] = useState('plan');
   const [navOpen, setNavOpen] = useState(false);
   const [gateBusy, setGateBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
   const baselined = useRef(false);
 
   async function load() {
-    const { data: plans, error } = await supabase.from('plans').select('*, organizations(*)');
+    const { data: rows, error } = await supabase.from('plans').select('*, organizations(*)').order('created_at');
     if (error) return setErr(error.message);
-    const plan = plans?.[0];
-    if (!plan) return setErr('No onboarding plan is linked to this email yet.');
+    const plans = rows || [];
+    let org = plans[0]?.organizations || null;
+    if (!org) { const { data: o } = await supabase.from('organizations').select('*').limit(1); org = o?.[0] || null; }
+    const isManager = plans.length > 0 && plans.every((p) => eq(p.manager_email, email));
+    const planIds = plans.map((p) => p.id);
+    const empty = { items: {}, cks: {}, reqs: {}, journal: {}, comments: {}, acks: {}, events: {}, notes: {} };
+    if (planIds.length === 0) { setData({ plans, org, isManager: true, by: empty }); return; }
     const [items, cks, reqs, journal, comments, acksR, events, notes] = await Promise.all([
-      supabase.from('plan_items').select('*').eq('plan_id', plan.id).order('phase').order('sort_order'),
-      supabase.from('check_ins').select('*, check_in_items(*)').eq('plan_id', plan.id).order('week_of', { ascending: false }),
-      supabase.from('ad_hoc_requests').select('*').eq('plan_id', plan.id).order('created_at', { ascending: false }),
-      supabase.from('journal_entries').select('*').eq('plan_id', plan.id).order('created_at', { ascending: false }),
-      supabase.from('comments').select('*').eq('plan_id', plan.id).order('created_at'),
-      supabase.from('item_acknowledgements').select('*').eq('plan_id', plan.id),
-      supabase.from('plan_item_events').select('*').eq('plan_id', plan.id).order('created_at', { ascending: false }),
-      supabase.from('note_uploads').select('*').eq('plan_id', plan.id).order('created_at', { ascending: false }),
+      supabase.from('plan_items').select('*').in('plan_id', planIds).order('phase').order('sort_order'),
+      supabase.from('check_ins').select('*, check_in_items(*)').in('plan_id', planIds).order('week_of', { ascending: false }),
+      supabase.from('ad_hoc_requests').select('*').in('plan_id', planIds).order('created_at', { ascending: false }),
+      supabase.from('journal_entries').select('*').in('plan_id', planIds).order('created_at', { ascending: false }),
+      supabase.from('comments').select('*').in('plan_id', planIds).order('created_at'),
+      supabase.from('item_acknowledgements').select('*').in('plan_id', planIds),
+      supabase.from('plan_item_events').select('*').in('plan_id', planIds).order('created_at', { ascending: false }),
+      supabase.from('note_uploads').select('*').in('plan_id', planIds).order('created_at', { ascending: false }),
     ]);
-    const itemList = items.data || [];
-    const ackList = acksR.data || [];
-
-    // First-login baseline: mark everything currently on the plan as "seen" for this user, so
-    // NEW/UPDATED chips and the acknowledge gate only fire for changes from here on (items 10 & 12).
-    const mine = ackList.filter((a) => eq(a.user_email, email));
-    if (mine.length === 0 && itemList.length > 0 && !baselined.current) {
+    const grp = (r) => { const m = {}; for (const id of planIds) m[id] = []; for (const x of (r || [])) { (m[x.plan_id] = m[x.plan_id] || []).push(x); } return m; };
+    const by = { items: grp(items.data), cks: grp(cks.data), reqs: grp(reqs.data), journal: grp(journal.data), comments: grp(comments.data), acks: grp(acksR.data), events: grp(events.data), notes: grp(notes.data) };
+    const myAcks = (acksR.data || []).filter((a) => eq(a.user_email, email));
+    const allItems = items.data || [];
+    if (myAcks.length === 0 && allItems.length > 0 && !baselined.current) {
       baselined.current = true;
-      const rows = itemList.map((i) => ({ plan_id: plan.id, plan_item_id: i.id, user_email: email, ack_version: i.content_version || 1 }));
-      await supabase.from('item_acknowledgements').upsert(rows, { onConflict: 'plan_item_id,user_email' });
+      const rowsAck = allItems.map((i) => ({ plan_id: i.plan_id, plan_item_id: i.id, user_email: email, ack_version: i.content_version || 1 }));
+      await supabase.from('item_acknowledgements').upsert(rowsAck, { onConflict: 'plan_item_id,user_email' });
       return load();
     }
-    setData({ plan, org: plan.organizations, items: itemList, cks: cks.data || [], reqs: reqs.data || [], journal: journal.data || [], comments: comments.data || [], acks: ackList, events: events.data || [], notes: notes.data || [] });
+    setData({ plans, org, isManager, by });
   }
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err) return <div className="center"><p style={{ color: 'var(--cw-red)' }}>{err}</p><button className="btn ghost" onClick={() => supabase.auth.signOut()}>Sign out</button></div>;
-  if (!data) return <div className="center muted">Loading your plan…</div>;
+  if (!data) return <div className="center muted">Loading…</div>;
 
-  const { plan, org, items, cks, reqs, journal, comments, acks, events, notes } = data;
-  const isManager = eq(email, plan.manager_email);
+  const { plans, org, isManager, by } = data;
+  const managerName = plans.find((p) => p.manager_name)?.manager_name || email;
 
-  // Acknowledge helpers
-  async function ackItem(item) {
-    await supabase.from('item_acknowledgements').upsert({ plan_id: plan.id, plan_item_id: item.id, user_email: email, ack_version: item.content_version || 1, acknowledged_at: new Date().toISOString() }, { onConflict: 'plan_item_id,user_email' });
-    load();
-  }
-  async function ackAll(list) {
-    const rows = list.map((i) => ({ plan_id: plan.id, plan_item_id: i.id, user_email: email, ack_version: i.content_version || 1, acknowledged_at: new Date().toISOString() }));
-    if (rows.length) await supabase.from('item_acknowledgements').upsert(rows, { onConflict: 'plan_item_id,user_email' });
-    load();
-  }
-
-  // Employee gate: must acknowledge new leader-added items before doing anything (item 12)
-  const mustAck = !isManager ? items.filter((i) => i.source === 'manager_added' && eq(i.created_by, plan.manager_email) && !acks.some((a) => a.plan_item_id === i.id && eq(a.user_email, email))) : [];
-
-  async function onStatus(item, status) {
-    let evidence = item.evidence;
-    if (status === 'done' && !evidence) { evidence = window.prompt(`Marking done. What's the evidence?\n\n"${item.success_measure}"`); if (evidence === null) return; }
-    const { error } = await supabase.from('plan_items').update({ status, evidence }).eq('id', item.id);
-    if (error) alert(error.message); else load();
-  }
-  async function onTogglePriority(item) {
-    const { error } = await supabase.from('plan_items').update({ phase_critical: !item.phase_critical }).eq('id', item.id);
-    if (error) alert(error.message.includes('two active priorities') ? `Phase ${item.phase} already has two active priorities. Mark one Done or unflag it first.` : error.message);
-    else load();
-  }
-  async function onSave(item, patch) {
-    const { error } = await supabase.from('plan_items').update({ title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }).eq('id', item.id);
-    if (error) { alert(friendly(error.message, patch.phase)); return false; }
-    load(); return true;
-  }
-  async function onDelete(item) {
-    if (!window.confirm(`Delete “${item.title}”? This is logged.`)) return;
-    const { error } = await supabase.from('plan_items').delete().eq('id', item.id);
-    if (error) alert(error.message); else load();
-  }
-  async function addItem(patch) {
-    if (isManager) {
-      const { error } = await supabase.from('plan_items').insert({ plan_id: plan.id, phase: patch.phase, track: patch.track, tags: patch.tags, title: patch.title, success_measure: patch.success_measure, phase_critical: patch.phase_critical, source: 'manager_added', created_by: email });
-      if (error) { alert(friendly(error.message, patch.phase)); return false; }
-    } else {
-      const { error } = await supabase.from('ad_hoc_requests').insert({ plan_id: plan.id, raw_text: patch.title, ai_suggestion: { title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }, requested_by: email, source_type: patch.source_url ? 'fireflies' : 'text', source_url: patch.source_url || null });
-      if (error) { alert(error.message); return false; }
-    }
-    load(); return true;
-  }
-  async function resolveReq(req, approve) {
-    if (approve) {
-      const s = req.ai_suggestion || {};
-      const { error } = await supabase.from('plan_items').insert({ plan_id: plan.id, phase: +(s.phase || 60), track: s.track || 'impact', tags: parseTags(s.tags), title: s.title || req.raw_text.slice(0, 140), success_measure: s.success_measure || 'Define “done” together at the next dialogue', phase_critical: !!s.phase_critical, source: 'employee_proposed', created_by: req.requested_by });
-      if (error) return alert(friendly(error.message, s.phase));
-      await supabase.from('ad_hoc_requests').update({ status: 'approved', approved_by: email }).eq('id', req.id);
-    } else { await supabase.from('ad_hoc_requests').update({ status: 'rejected', approved_by: email }).eq('id', req.id); }
-    load();
-  }
-  async function onComment(item, body, priv) {
-    let error;
-    if (priv) ({ error } = await supabase.from('journal_entries').insert({ plan_id: plan.id, author_email: email, body, source: 'private_comment', plan_item_id: item.id }));
-    else ({ error } = await supabase.from('comments').insert({ plan_id: plan.id, plan_item_id: item.id, author_email: email, body, private: false }));
-    if (error) { alert(error.message); return false; }
-    load(); return true;
-  }
+  async function ackItem(item) { await supabase.from('item_acknowledgements').upsert({ plan_id: item.plan_id, plan_item_id: item.id, user_email: email, ack_version: item.content_version || 1, acknowledged_at: new Date().toISOString() }, { onConflict: 'plan_item_id,user_email' }); load(); }
+  async function ackAll(list) { const rows = list.map((i) => ({ plan_id: i.plan_id, plan_item_id: i.id, user_email: email, ack_version: i.content_version || 1, acknowledged_at: new Date().toISOString() })); if (rows.length) await supabase.from('item_acknowledgements').upsert(rows, { onConflict: 'plan_item_id,user_email' }); load(); }
+  async function onStatus(item, status) { let evidence = item.evidence; if (status === 'done' && !evidence) { evidence = window.prompt(`Marking done. What's the evidence?\n\n"${item.success_measure}"`); if (evidence === null) return; } const { error } = await supabase.from('plan_items').update({ status, evidence }).eq('id', item.id); if (error) alert(error.message); else load(); }
+  async function onTogglePriority(item) { const { error } = await supabase.from('plan_items').update({ phase_critical: !item.phase_critical }).eq('id', item.id); if (error) alert(error.message.includes('two active priorities') ? `Phase ${item.phase} already has two active priorities. Mark one Done or unflag it first.` : error.message); else load(); }
+  async function onSave(item, patch) { const { error } = await supabase.from('plan_items').update({ title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }).eq('id', item.id); if (error) { alert(friendly(error.message, patch.phase)); return false; } load(); return true; }
+  async function onDelete(item) { if (!window.confirm(`Delete “${item.title}”? This is logged.`)) return; const { error } = await supabase.from('plan_items').delete().eq('id', item.id); if (error) alert(error.message); else load(); }
+  async function addItem(patch, target) { if (isManager) { const { error } = await supabase.from('plan_items').insert({ plan_id: target.id, phase: patch.phase, track: patch.track, tags: patch.tags, title: patch.title, success_measure: patch.success_measure, phase_critical: patch.phase_critical, source: 'manager_added', created_by: email }); if (error) { alert(friendly(error.message, patch.phase)); return false; } } else { const { error } = await supabase.from('ad_hoc_requests').insert({ plan_id: target.id, raw_text: patch.title, ai_suggestion: { title: patch.title, phase: patch.phase, track: patch.track, tags: patch.tags, success_measure: patch.success_measure, phase_critical: patch.phase_critical }, requested_by: email, source_type: patch.source_url ? 'fireflies' : 'text', source_url: patch.source_url || null }); if (error) { alert(error.message); return false; } } load(); return true; }
+  async function resolveReq(req, approve) { if (approve) { const s = req.ai_suggestion || {}; const { error } = await supabase.from('plan_items').insert({ plan_id: req.plan_id, phase: +(s.phase || 60), track: s.track || 'impact', tags: parseTags(s.tags), title: s.title || req.raw_text.slice(0, 140), success_measure: s.success_measure || 'Define “done” together at the next dialogue', phase_critical: !!s.phase_critical, source: 'employee_proposed', created_by: req.requested_by }); if (error) return alert(friendly(error.message, s.phase)); await supabase.from('ad_hoc_requests').update({ status: 'approved', approved_by: email }).eq('id', req.id); } else { await supabase.from('ad_hoc_requests').update({ status: 'rejected', approved_by: email }).eq('id', req.id); } load(); }
+  async function onComment(item, body, priv) { let error; if (priv) ({ error } = await supabase.from('journal_entries').insert({ plan_id: item.plan_id, author_email: email, body, source: 'private_comment', plan_item_id: item.id })); else ({ error } = await supabase.from('comments').insert({ plan_id: item.plan_id, plan_item_id: item.id, author_email: email, body, private: false })); if (error) { alert(error.message); return false; } load(); return true; }
   async function onDeleteComment(c) { const { error } = await supabase.from('comments').delete().eq('id', c.id); if (error) alert(error.message); else load(); }
 
-  const handlers = { onStatus, onDelete, onSave, onTogglePriority, onAck: ackItem, ackAll, onComment, onDeleteComment, addItem, resolveReq };
-  const newCount = items.filter((i) => flagFor(i, acks, email)).length;
-  const nav = NAV(isManager, newCount);
-  const go = (k) => { setTab(k); setNavOpen(false); };
+  async function createEmployee(f) {
+    if (!org) return { error: 'No organization found.' };
+    const { data: np, error } = await supabase.from('plans').insert({ org_id: org.id, manager_email: email, manager_name: managerName, employee_email: f.email, employee_name: f.name, role_title: f.role_title || 'New leader', role_description: f.role_description, start_date: new Date().toISOString().slice(0, 10), status: 'active' }).select('*, organizations(*)').single();
+    if (error) return { error: error.message };
+    try {
+      const res = await fetch('/api/generate-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ role_title: f.role_title, role_description: f.role_description, one_page: org.one_page, core_values: org.core_values }) }).then((r) => r.json());
+      const rows = (res.items || []).map((it, idx) => ({ plan_id: np.id, phase: [30, 60, 90].includes(+it.phase) ? +it.phase : 30, track: it.track === 'acclimation' ? 'acclimation' : 'impact', tags: parseTags(it.tags), title: String(it.title || '').slice(0, 200), success_measure: it.success_measure || 'Define “done” together at a weekly dialogue', source: 'ai_suggested', sort_order: idx }));
+      if (rows.length) await supabase.from('plan_items').insert(rows);
+    } catch (e) { /* generation optional */ }
+    let invite = null;
+    try { invite = await fetch('/api/invite', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: f.email, redirectTo: typeof window !== 'undefined' ? window.location.origin : '' }) }).then((r) => r.json()); } catch (e) {}
+    await load();
+    setView(np.id);
+    return { plan: np, invite };
+  }
 
+  const handlers = { onStatus, onDelete, onSave, onTogglePriority, onAck: ackItem, ackAll, onComment, onDeleteComment, addItem, resolveReq };
+
+  /* ---------- Employee experience (own plan only) ---------- */
+  if (!isManager) {
+    const plan = plans[0];
+    if (!plan) return <div className="center"><p>No onboarding plan is linked to this email yet.</p><button className="btn ghost" onClick={() => supabase.auth.signOut()}>Sign out</button></div>;
+    const items = by.items[plan.id] || [], acks = by.acks[plan.id] || [];
+    const mustAck = items.filter((i) => i.source === 'manager_added' && eq(i.created_by, plan.manager_email) && !acks.some((a) => a.plan_item_id === i.id && eq(a.user_email, email)));
+    const nav = NAV(false, items.filter((i) => flagFor(i, acks, email)).length);
+    const go = (k) => { setTab(k); setNavOpen(false); };
+    const eh = { ...handlers, addItem: (p) => addItem(p, plan) };
+    return (
+      <>
+        <header className="topbar"><div className="topbar-inner"><div className="row" style={{ gap: 12 }}><button className="hamburger no-print" onClick={() => setNavOpen((o) => !o)} aria-label="Menu">☰</button><div><Logo light /><div className="app-title">Leader Onboarding · {plan.employee_name} · {plan.role_title}</div></div></div><div className="userchip"><span className="role">New leader</span><span className="email-txt">{email}</span><button className="signout" onClick={() => supabase.auth.signOut()}>Sign out</button></div></div></header>
+        {mustAck.length > 0 && <AckGate items={mustAck} org={org} busy={gateBusy} onAck={async (i) => { setGateBusy(true); await ackItem(i); setGateBusy(false); }} onAckAll={async () => { setGateBusy(true); await ackAll(mustAck); setGateBusy(false); }} />}
+        <div className={`backdrop no-print ${navOpen ? 'show' : ''}`} onClick={() => setNavOpen(false)} />
+        <div className="shell">
+          <nav className={`sidebar no-print ${navOpen ? 'open' : ''}`}>{nav.map((n) => <button key={n.k} className={`navbtn ${tab === n.k ? 'active' : ''}`} onClick={() => go(n.k)}><span className="ic">{n.ic}</span>{n.label}{n.badge ? <span className="badge">{n.badge}</span> : null}</button>)}</nav>
+          <main className="main">
+            {tab === 'plan' && <PlanView org={org} items={items} comments={by.comments[plan.id] || []} acks={acks} email={email} isManager={false} plan={plan} handlers={handlers} />}
+            {tab === 'checkin' && <CheckinView plan={plan} items={items} cks={by.cks[plan.id] || []} reload={load} />}
+            {tab === 'add' && <AddView plan={plan} org={org} isManager={false} email={email} reqs={by.reqs[plan.id] || []} handlers={eh} />}
+            {tab === 'journal' && <JournalView plan={plan} email={email} entries={by.journal[plan.id] || []} items={items} reload={load} />}
+            {tab === 'activity' && <ActivityView events={by.events[plan.id] || []} isManager={false} />}
+            {tab === 'download' && <DownloadView plan={plan} org={org} items={items} notes={by.notes[plan.id] || []} isManager={false} email={email} reload={load} />}
+          </main>
+        </div>
+      </>
+    );
+  }
+
+  /* ---------- Leader experience (team + drill-in) ---------- */
+  const selPlan = view !== 'team' ? plans.find((p) => p.id === view) : null;
+  const sItems = selPlan ? (by.items[selPlan.id] || []) : [];
+  const sAcks = selPlan ? (by.acks[selPlan.id] || []) : [];
+  const nav = selPlan ? NAV(true, sItems.filter((i) => flagFor(i, sAcks, email)).length) : [];
+  const go = (k) => { setTab(k); setNavOpen(false); };
+  const mh = selPlan ? { ...handlers, addItem: (p) => addItem(p, selPlan) } : handlers;
   return (
     <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="row" style={{ gap: 12 }}>
-            <button className="hamburger no-print" onClick={() => setNavOpen((o) => !o)} aria-label="Menu">☰</button>
-            <div><Logo light /><div className="app-title">Leader Onboarding · {plan.employee_name} · {plan.role_title}</div></div>
-          </div>
-          <div className="userchip"><span className="role">{isManager ? 'Leader' : 'New leader'}</span><span className="email-txt">{email}</span><button className="signout" onClick={() => supabase.auth.signOut()}>Sign out</button></div>
-        </div>
-      </header>
-
-      {mustAck.length > 0 && <AckGate items={mustAck} org={org} busy={gateBusy} onAck={async (i) => { setGateBusy(true); await ackItem(i); setGateBusy(false); }} onAckAll={async () => { setGateBusy(true); await ackAll(mustAck); setGateBusy(false); }} />}
-
+      <header className="topbar"><div className="topbar-inner"><div className="row" style={{ gap: 12 }}><button className="hamburger no-print" onClick={() => setNavOpen((o) => !o)} aria-label="Menu">☰</button><div><Logo light /><div className="app-title">{selPlan ? `${selPlan.employee_name} · ${selPlan.role_title}` : 'Team Onboarding'}</div></div></div><div className="userchip"><span className="role">Leader</span><span className="email-txt">{email}</span><button className="signout" onClick={() => supabase.auth.signOut()}>Sign out</button></div></div></header>
+      {adding && <AddEmployee onClose={() => setAdding(false)} onCreate={createEmployee} />}
       <div className={`backdrop no-print ${navOpen ? 'show' : ''}`} onClick={() => setNavOpen(false)} />
       <div className="shell">
         <nav className={`sidebar no-print ${navOpen ? 'open' : ''}`}>
-          {nav.map((n) => (
-            <button key={n.k} className={`navbtn ${tab === n.k ? 'active' : ''}`} onClick={() => go(n.k)}>
-              <span className="ic">{n.ic}</span>{n.label}
-              {n.badge ? <span className="badge">{n.badge}</span> : null}
-            </button>
-          ))}
+          <button className={`navbtn ${view === 'team' ? 'active' : ''}`} onClick={() => { setView('team'); setNavOpen(false); }}><span className="ic">▦</span>Team Overview</button>
+          <div className="navsec">Employees</div>
+          {plans.map((p) => <button key={p.id} className={`navbtn ${view === p.id ? 'active' : ''}`} onClick={() => { setView(p.id); setTab('plan'); setNavOpen(false); }}><span className="ic">•</span>{p.employee_name || p.employee_email}</button>)}
+          <button className="navbtn addemp" onClick={() => setAdding(true)}><span className="ic">＋</span>Add Employee</button>
+          {selPlan && <><div className="navsec">{selPlan.employee_name?.split(' ')[0] || 'Plan'}</div>{nav.map((n) => <button key={n.k} className={`navbtn ${tab === n.k ? 'active' : ''}`} onClick={() => go(n.k)}><span className="ic">{n.ic}</span>{n.label}{n.badge ? <span className="badge">{n.badge}</span> : null}</button>)}</>}
         </nav>
         <main className="main">
-          {tab === 'plan' && <PlanView org={org} items={items} comments={comments} acks={acks} email={email} isManager={isManager} plan={plan} handlers={handlers} />}
-          {tab === 'checkin' && !isManager && <CheckinView plan={plan} items={items} cks={cks} reload={load} />}
-          {tab === 'prep' && isManager && <PrepView plan={plan} items={items} cks={cks} />}
-          {tab === 'add' && <AddView plan={plan} org={org} isManager={isManager} email={email} reqs={reqs} handlers={handlers} />}
-          {tab === 'journal' && <JournalView plan={plan} email={email} entries={journal} items={items} reload={load} />}
-          {tab === 'activity' && <ActivityView events={events} isManager={isManager} />}
-          {tab === 'download' && <DownloadView plan={plan} org={org} items={items} notes={notes} isManager={isManager} email={email} reload={load} />}
+          {!selPlan && <TeamOverview plans={plans} byPlan={by} org={org} onOpen={(id) => { setView(id); setTab('plan'); }} handlers={handlers} />}
+          {selPlan && tab === 'plan' && <PlanView org={org} items={sItems} comments={by.comments[selPlan.id] || []} acks={sAcks} email={email} isManager plan={selPlan} handlers={handlers} />}
+          {selPlan && tab === 'prep' && <PrepView plan={selPlan} items={sItems} cks={by.cks[selPlan.id] || []} />}
+          {selPlan && tab === 'add' && <AddView plan={selPlan} org={org} isManager email={email} reqs={by.reqs[selPlan.id] || []} handlers={mh} />}
+          {selPlan && tab === 'journal' && <JournalView plan={selPlan} email={email} entries={by.journal[selPlan.id] || []} items={sItems} reload={load} />}
+          {selPlan && tab === 'activity' && <ActivityView events={by.events[selPlan.id] || []} isManager />}
+          {selPlan && tab === 'download' && <DownloadView plan={selPlan} org={org} items={sItems} notes={by.notes[selPlan.id] || []} isManager email={email} reload={load} />}
         </main>
       </div>
     </>

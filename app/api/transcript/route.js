@@ -1,13 +1,32 @@
 // Turns a meeting transcript (e.g. pasted from Fireflies) or a meeting link into a set of
 // candidate 30/60/90 plan items, structured against the OnePage priorities and core values.
 // Uses Claude when ANTHROPIC_API_KEY is set; otherwise a light heuristic fallback.
-// NOTE: We do not fetch external meeting URLs server-side (Fireflies share links are auth-gated
-// and vary). Paste the transcript text; the url is stored on the request only as a reference.
+// Provide at least one of: transcript text, or a meeting link (we fetch and strip it to text).
+// Note: auth-gated share links (some Fireflies views) may not yield readable text.
 
 export async function POST(req) {
   const { transcript = '', url = '', one_page = {}, core_values = [], role_title = '' } = await req.json();
   const key = process.env.ANTHROPIC_API_KEY;
-  const text = String(transcript || '').trim();
+  let text = String(transcript || '').trim();
+
+  // If no transcript was pasted, try to pull readable text from the meeting link.
+  if (text.length < 20 && url) {
+    try {
+      const rr = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0' } });
+      const html = await rr.text();
+      text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    } catch (e) {
+      // leave text as-is; handled below
+    }
+  }
+  if (text.length < 20) {
+    return Response.json({ source: 'none', url, items: [], note: 'Could not read that link — paste the transcript text instead.' });
+  }
 
   if (key && text.length > 20) {
     try {
