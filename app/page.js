@@ -446,6 +446,35 @@ function Carousel({ items, org, isManager, onAdd, onRemove }) {
   );
 }
 
+/* Smart list typing: continue numbered (1. / 1)) or bulleted (* / - / •) lists on Enter,
+   and exit the list when Enter is pressed on an empty marker line. */
+function smartListKeyDown(e, setValue) {
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  const ta = e.target;
+  if (ta.selectionStart !== ta.selectionEnd) return;
+  const pos = ta.selectionStart;
+  const before = ta.value.slice(0, pos);
+  const after = ta.value.slice(pos);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const line = before.slice(lineStart);
+  const numM = line.match(/^(\s*)(\d+)([.)])\s+(.*)$/);
+  const bulM = line.match(/^(\s*)([*\-•])\s+(.*)$/);
+  if (!numM && !bulM) return;
+  e.preventDefault();
+  const content = numM ? numM[4] : bulM[3];
+  if (content.trim() === '') {
+    const newBefore = before.slice(0, lineStart);
+    setValue(newBefore + after);
+    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = newBefore.length; });
+    return;
+  }
+  const marker = numM ? `${numM[1]}${parseInt(numM[2], 10) + 1}${numM[3]} ` : `${bulM[1]}${bulM[2]} `;
+  const insert = '\n' + marker;
+  setValue(before + insert + after);
+  const caret = pos + insert.length;
+  requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = caret; });
+}
+
 function AiAssist({ plan, org, onUse, isManager }) {
   const [raw, setRaw] = useState('');
   const [cands, setCands] = useState(null);
@@ -465,7 +494,7 @@ function AiAssist({ plan, org, onUse, isManager }) {
     <div>
       <p className="sub">List one or more projects, focus areas, or relationships — number them or put one per line. Each becomes a full plan item you can review, edit, and add.</p>
       <div className="row" style={{ flexWrap: 'nowrap' }}>
-        <textarea rows={4} style={{ flex: 1 }} placeholder={'1. Take over the monthly Sypher delivery-credit review\n2. Build relationships across the Connections product team\n3. Document the onboarding runbook'} value={raw} onChange={(e) => setRaw(e.target.value)} />
+        <textarea rows={4} style={{ flex: 1 }} placeholder={'1. Take over the monthly Sypher delivery-credit review\n2. Build relationships across the Connections product team\n3. Document the onboarding runbook'} value={raw} onChange={(e) => setRaw(e.target.value)} onKeyDown={(e) => smartListKeyDown(e, setRaw)} />
         <Mic onText={(t) => setRaw((v) => (v ? v + ' ' : '') + t)} />
       </div>
       <div className="row" style={{ marginTop: 10 }}><button className="btn" disabled={busy || raw.trim().length < 8} onClick={suggest}>{busy ? 'Structuring…' : 'Structure items'}</button></div>
@@ -500,7 +529,7 @@ function MeetingImport({ plan, org, onAdd, isManager }) {
       <div className="field"><label>Meeting link</label><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://app.fireflies.ai/view/…" /></div>
       <div className="field"><label>Transcript</label>
         <div className="row" style={{ flexWrap: 'nowrap' }}>
-          <textarea rows={5} style={{ flex: 1 }} placeholder="Paste the meeting transcript here…" value={transcript} onChange={(e) => setTranscript(e.target.value)} />
+          <textarea rows={5} style={{ flex: 1 }} placeholder="Paste the meeting transcript here…" value={transcript} onChange={(e) => setTranscript(e.target.value)} onKeyDown={(e) => smartListKeyDown(e, setTranscript)} />
           <Mic onText={(t) => setTranscript((v) => (v ? v + ' ' : '') + t)} />
         </div>
       </div>

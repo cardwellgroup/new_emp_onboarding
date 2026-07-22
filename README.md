@@ -1,8 +1,16 @@
-# Cardwell Leader Onboarding Tool — v0.2
+# Cardwell Leader Onboarding Tool — v0.3
 
 30/60/90 new-leader onboarding aligned to the OnePage — built as an extension of Connections Dialogs.
+Now supports multiple employees with per-employee logins and a combined leader view.
 
 **Pilot:** Dickens Aubourg (Leader) · Citlali Soberanis (New Leader)
+
+## 📚 Full documentation → `docs/`
+
+Start with **`docs/00-HANDOFF.md`**, then:
+`01-ARCHITECTURE.md` · `02-DATA-MODEL.md` · `03-FEATURES.md` · `04-OPERATIONS-RUNBOOK.md` ·
+`05-CONNECTIONS-INTEGRATION.md` · `CONTEXT.md` (engineer/AI primer).
+See also `SETUP-multi-employee.md` and `DEPLOY.md`.
 
 ## Stack
 
